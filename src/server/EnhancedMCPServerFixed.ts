@@ -107,6 +107,17 @@ export class EnhancedMCPServerFixed {
         }
       },
       {
+        name: 'update',
+        description: 'Write pattern to editor and play it (like clicking Update button)',
+        inputSchema: {
+          type: 'object',
+          properties: {
+            pattern: { type: 'string', description: 'Pattern code' }
+          },
+          required: ['pattern']
+        }
+      },
+      {
         name: 'play',
         description: 'Start playing pattern',
         inputSchema: { type: 'object', properties: {} }
@@ -567,7 +578,10 @@ export class EnhancedMCPServerFixed {
         const pattern = await this.getCurrentPatternSafe();
         const replaced = pattern.replace(args.search, args.replace);
         return await this.writePatternSafe(replaced);
-      
+
+      case 'update':
+        return await this.controller.update(args.pattern);
+
       case 'play':
         return await this.controller.play();
       

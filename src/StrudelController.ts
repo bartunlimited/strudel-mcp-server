@@ -6,6 +6,7 @@ export class StrudelController {
   private page: Page | null = null;
   private analyzer: AudioAnalyzer;
   private isHeadless: boolean;
+  private consoleErrors: string[] = [];
 
   constructor(headless: boolean = false) {
     this.isHeadless = headless;
@@ -28,6 +29,15 @@ export class StrudelController {
 
     this.page = await context.newPage();
 
+    // Listen for console errors from Strudel
+    this.page.on('console', (msg) => {
+      const text = msg.text();
+      // Capture [getTrigger] errors and [eval] errors
+      if (text.includes('[getTrigger] error') || text.includes('[eval] error')) {
+        this.consoleErrors.push(text);
+      }
+    });
+
     await this.page.goto('https://strudel.cc/', {
       waitUntil: 'networkidle',
     });
@@ -42,9 +52,24 @@ export class StrudelController {
   async writePattern(pattern: string): Promise<string> {
     if (!this.page) throw new Error('Not initialized');
 
-    await this.page.click('.cm-content');
-    await this.page.keyboard.press('ControlOrMeta+A');
-    await this.page.keyboard.type(pattern);
+    // Use page.evaluate to directly set the editor content
+    // This properly handles multiline code, unlike keyboard.type()
+    await this.page.evaluate((code) => {
+      const editor = document.querySelector('.cm-content') as any;
+      if (editor) {
+        const view = editor.cmView?.view;
+        if (view) {
+          // Use CodeMirror's API to replace all content
+          const transaction = view.state.update({
+            changes: { from: 0, to: view.state.doc.length, insert: code }
+          });
+          view.dispatch(transaction);
+        } else {
+          // Fallback: set textContent directly
+          editor.textContent = code;
+        }
+      }
+    }, pattern);
 
     return `Pattern written (${pattern.length} chars)`;
   }
@@ -82,6 +107,40 @@ export class StrudelController {
     }
 
     return 'Stopped';
+  }
+
+  async update(pattern: string): Promise<string> {
+    if (!this.page) throw new Error('Not initialized');
+
+    // Clear previous errors
+    this.consoleErrors = [];
+
+    await this.writePattern(pattern);
+    await this.page.waitForTimeout(100);
+
+    try {
+      await this.page.click('button[title*="update" i]', { timeout: 1000 });
+    } catch {
+      await this.page.keyboard.press('ControlOrMeta+Enter');
+    }
+
+    await this.page.waitForTimeout(1000); // Wait longer for errors to appear
+
+    // Check for errors
+    if (this.consoleErrors.length > 0) {
+      const uniqueErrors = [...new Set(this.consoleErrors)];
+      return `Updated and playing\n\n⚠️ ERRORS DETECTED:\n${uniqueErrors.join('\n')}`;
+    }
+
+    return 'Updated and playing';
+  }
+
+  getConsoleErrors(): string[] {
+    return this.consoleErrors;
+  }
+
+  clearConsoleErrors(): void {
+    this.consoleErrors = [];
   }
 
   async analyzeAudio(): Promise<any> {
