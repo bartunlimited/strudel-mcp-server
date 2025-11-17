@@ -149,6 +149,106 @@ export class StrudelController {
     return await this.analyzer.getAnalysis(this.page);
   }
 
+  async getSounds(): Promise<any> {
+    if (!this.page) throw new Error('Not initialized');
+
+    return await this.page.evaluate(() => {
+      const win = window as any;
+
+      try {
+        // Access soundMap reactive object's value property
+        if (win.soundMap && win.soundMap.value) {
+          const soundsObj = win.soundMap.value;
+          return Object.keys(soundsObj).sort();
+        }
+
+        return [];
+      } catch (e) {
+        return { error: String(e) };
+      }
+    });
+  }
+
+  async listAvailableSounds(): Promise<any> {
+    if (!this.page) throw new Error('Not initialized');
+
+    return await this.page.evaluate(() => {
+      const win = window as any;
+
+      try {
+        // Access soundMap reactive object's value property
+        if (win.soundMap && win.soundMap.value) {
+          const soundsObj = win.soundMap.value;
+          const soundList = Object.keys(soundsObj).sort();
+
+          return {
+            total: soundList.length,
+            sounds: soundList
+          };
+        }
+
+        return {
+          total: 0,
+          sounds: [],
+          error: 'soundMap.value not found'
+        };
+      } catch (e) {
+        return {
+          total: 0,
+          sounds: [],
+          error: String(e)
+        };
+      }
+    });
+  }
+
+  async getSoundCategories(): Promise<any> {
+    if (!this.page) throw new Error('Not initialized');
+
+    return await this.page.evaluate(() => {
+      const categories: any = {
+        synths: [],
+        zzfx: [],
+        casio: [],
+        other: []
+      };
+
+      try {
+        const win = window as any;
+
+        // Get all available sounds from soundMap
+        if (win.soundMap && win.soundMap.value) {
+          const soundsObj = win.soundMap.value;
+          const allSounds = Object.keys(soundsObj).sort();
+
+          // Categorize sounds
+          const synthWaveforms = ['triangle', 'square', 'sawtooth', 'sine', 'tri', 'sqr', 'saw', 'sin', 'sbd', 'supersaw', 'pulse'];
+          const noiseGenerators = ['pink', 'white', 'brown', 'crackle'];
+          const zzfxSounds = ['zzfx', 'z_sine', 'z_sawtooth', 'z_triangle', 'z_square', 'z_tan', 'z_noise'];
+          const casioSounds = ['casio', 'crow', 'insect', 'wind', 'jazz', 'metal', 'east'];
+          const otherSynths = ['bytebeat'];
+
+          allSounds.forEach((sound: string) => {
+            if (synthWaveforms.includes(sound) || noiseGenerators.includes(sound) || otherSynths.includes(sound)) {
+              categories.synths.push(sound);
+            } else if (zzfxSounds.includes(sound)) {
+              categories.zzfx.push(sound);
+            } else if (casioSounds.includes(sound)) {
+              categories.casio.push(sound);
+            } else {
+              categories.other.push(sound);
+            }
+          });
+        }
+
+      } catch (e) {
+        categories.error = String(e);
+      }
+
+      return categories;
+    });
+  }
+
   async cleanup() {
     if (this.browser) {
       await this.browser.close();

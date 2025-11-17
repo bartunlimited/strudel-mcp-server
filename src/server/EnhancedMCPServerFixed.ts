@@ -445,6 +445,29 @@ export class EnhancedMCPServerFixed {
           },
           required: ['style']
         }
+      },
+
+      // Sound Discovery Tools (3)
+      {
+        name: 'list_sounds',
+        description: 'List all available sounds',
+        inputSchema: { type: 'object', properties: {} }
+      },
+      {
+        name: 'get_sound_categories',
+        description: 'Get sounds organized by category (samples, drum_machines, synths, wavetables, gm_instruments)',
+        inputSchema: { type: 'object', properties: {} }
+      },
+      {
+        name: 'search_sounds',
+        description: 'Search for sounds by name',
+        inputSchema: {
+          type: 'object',
+          properties: {
+            query: { type: 'string', description: 'Search query' }
+          },
+          required: ['query']
+        }
       }
     ];
   }
@@ -456,23 +479,32 @@ export class EnhancedMCPServerFixed {
 
     this.server.setRequestHandler(CallToolRequestSchema, async (request) => {
       const { name, arguments: args } = request.params;
-      
+
       try {
-        this.logger.info(`Executing tool: ${name}`, args);
+        // Filter args for logging - completely exclude pattern/code strings from CLI
+        const loggableArgs: any = { ...args };
+        if ('pattern' in loggableArgs) {
+          delete loggableArgs.pattern;
+        }
+        if ('code' in loggableArgs) {
+          delete loggableArgs.code;
+        }
+
+        this.logger.info(`Executing tool: ${name}`, loggableArgs);
         let result = await this.executeTool(name, args);
-        
+
         return {
-          content: [{ 
-            type: 'text', 
-            text: typeof result === 'string' ? result : JSON.stringify(result, null, 2) 
+          content: [{
+            type: 'text',
+            text: typeof result === 'string' ? result : JSON.stringify(result, null, 2)
           }],
         };
       } catch (error: any) {
         this.logger.error(`Tool execution failed: ${name}`, error);
         return {
-          content: [{ 
-            type: 'text', 
-            text: `Error: ${error.message}` 
+          content: [{
+            type: 'text',
+            text: `Error: ${error.message}`
           }],
         };
       }
@@ -796,7 +828,32 @@ export class EnhancedMCPServerFixed {
           return 'Redone';
         }
         return 'Nothing to redo';
-      
+
+      case 'list_sounds':
+        if (!this.isInitialized) {
+          return 'Browser not initialized. Run init first.';
+        }
+        const sounds = await this.controller.listAvailableSounds();
+        return JSON.stringify(sounds, null, 2);
+
+      case 'get_sound_categories':
+        if (!this.isInitialized) {
+          return 'Browser not initialized. Run init first.';
+        }
+        const categories = await this.controller.getSoundCategories();
+        return JSON.stringify(categories, null, 2);
+
+      case 'search_sounds':
+        if (!this.isInitialized) {
+          return 'Browser not initialized. Run init first.';
+        }
+        const query = args.query?.toLowerCase() || '';
+        const soundsResult = await this.controller.listAvailableSounds();
+        const filtered = soundsResult.sounds.filter((sound: string) =>
+          sound.toLowerCase().includes(query)
+        );
+        return JSON.stringify(filtered, null, 2);
+
       default:
         throw new Error(`Unknown tool: ${name}`);
     }
