@@ -9,8 +9,12 @@ import { StrudelController } from '../StrudelController.js';
 import { PatternStore } from '../PatternStore.js';
 import { MusicTheory } from '../services/MusicTheory.js';
 import { PatternGenerator } from '../services/PatternGenerator.js';
-import { readFileSync, existsSync } from 'fs';
+import { readFileSync, existsSync, promises as fsPromises } from 'fs';
 import { Logger } from '../utils/Logger.js';
+import { exec } from 'child_process';
+import { promisify } from 'util';
+
+const execAsync = promisify(exec);
 
 const configPath = './config.json';
 const config = existsSync(configPath) 
@@ -278,6 +282,58 @@ export class EnhancedMCPServerFixed {
         name: 'detect_key',
         description: 'Key detection',
         inputSchema: { type: 'object', properties: {} }
+      },
+      {
+        name: 'get_console_errors',
+        description: 'Get console errors from Strudel',
+        inputSchema: { type: 'object', properties: {} }
+      },
+
+      // Audio Recording (2)
+      {
+        name: 'start_recording',
+        description: 'Start recording audio output',
+        inputSchema: { type: 'object', properties: {} }
+      },
+      {
+        name: 'stop_recording',
+        description: 'Stop recording and return audio data',
+        inputSchema: {
+          type: 'object',
+          properties: {
+            filename: { type: 'string', description: 'Output filename (optional)' },
+            format: { type: 'string', description: 'Output format: webm, wav, mp3 (default: webm)' }
+          }
+        }
+      },
+      {
+        name: 'record_timed',
+        description: 'Record audio for a specified duration in seconds',
+        inputSchema: {
+          type: 'object',
+          properties: {
+            duration: { type: 'number', description: 'Duration in seconds' },
+            filename: { type: 'string', description: 'Output filename (optional)' },
+            format: { type: 'string', description: 'Output format: webm, wav, mp3 (default: webm)' }
+          },
+          required: ['duration']
+        }
+      },
+      {
+        name: 'calculate_pattern_duration',
+        description: 'Calculate the full duration of the current pattern based on CPM and .slow() values',
+        inputSchema: { type: 'object', properties: {} }
+      },
+      {
+        name: 'record_full_pattern',
+        description: 'Record the entire pattern from start to finish (automatically calculates duration)',
+        inputSchema: {
+          type: 'object',
+          properties: {
+            filename: { type: 'string', description: 'Output filename (optional)' },
+            format: { type: 'string', description: 'Output format: webm, wav, mp3 (default: webm)' }
+          }
+        }
       },
 
       // Effects & Processing (5)
@@ -779,7 +835,234 @@ export class EnhancedMCPServerFixed {
       
       case 'detect_key':
         return 'Key detection: Coming soon';
-      
+
+      case 'get_console_errors':
+        if (!this.isInitialized) {
+          return 'Browser not initialized. Run init first.';
+        }
+        return this.controller.getConsoleErrors();
+
+      // Audio Recording
+      case 'start_recording':
+        if (!this.isInitialized) {
+          return 'Browser not initialized. Run init first.';
+        }
+        return await this.controller.startRecording();
+
+      case 'stop_recording':
+        if (!this.isInitialized) {
+          return 'Browser not initialized. Run init first.';
+        }
+        const recordingResult = await this.controller.stopRecording();
+        if (recordingResult.success && recordingResult.audioData) {
+          // Determine format (default to webm)
+          const requestedFormat = args.format || 'webm';
+          const timestamp = Date.now();
+          const baseFilename = args.filename
+            ? args.filename.replace(/\.(webm|wav|mp3)$/i, '')
+            : `strudel-recording-${timestamp}`;
+
+          // Save original webm file
+          const webmFilename = `${baseFilename}.webm`;
+          const webmPath = `/Users/bart/Documents/vscode/patterns/${webmFilename}`;
+          const audioBuffer = Buffer.from(recordingResult.audioData, 'base64');
+          await fsPromises.writeFile(webmPath, audioBuffer);
+
+          let finalPath = webmPath;
+          let finalFormat = 'webm';
+          let finalSize = recordingResult.sizeBytes;
+
+          // Convert if needed
+          if (requestedFormat !== 'webm') {
+            const outputFilename = `${baseFilename}.${requestedFormat}`;
+            const outputPath = `/Users/bart/Documents/vscode/patterns/${outputFilename}`;
+
+            try {
+              // Check if ffmpeg is available
+              await execAsync('which ffmpeg');
+
+              // Conversion commands
+              let ffmpegCmd;
+              if (requestedFormat === 'wav') {
+                // Lossless PCM WAV
+                ffmpegCmd = `ffmpeg -i "${webmPath}" -acodec pcm_s16le -ar 44100 "${outputPath}" -y`;
+              } else if (requestedFormat === 'mp3') {
+                // High quality MP3
+                ffmpegCmd = `ffmpeg -i "${webmPath}" -codec:a libmp3lame -q:a 0 "${outputPath}" -y`;
+              } else {
+                throw new Error(`Unsupported format: ${requestedFormat}`);
+              }
+
+              await execAsync(ffmpegCmd);
+
+              // Get converted file size
+              const stats = await fsPromises.stat(outputPath);
+              finalSize = stats.size;
+              finalPath = outputPath;
+              finalFormat = requestedFormat;
+
+              // Delete original webm if conversion succeeded
+              await fsPromises.unlink(webmPath);
+
+            } catch (conversionError: any) {
+              // If conversion fails, return webm with warning
+              return {
+                success: true,
+                duration: recordingResult.duration,
+                sizeBytes: recordingResult.sizeBytes,
+                format: 'webm',
+                savedTo: webmPath,
+                warning: `Conversion to ${requestedFormat} failed: ${conversionError.message}. Saved as WebM instead. Install ffmpeg for format conversion.`
+              };
+            }
+          }
+
+          return {
+            success: true,
+            duration: recordingResult.duration,
+            sizeBytes: finalSize,
+            format: finalFormat,
+            savedTo: finalPath
+          };
+        }
+        return recordingResult;
+
+      case 'record_timed':
+        if (!this.isInitialized) {
+          return 'Browser not initialized. Run init first.';
+        }
+        const timedResult = await this.controller.recordTimed(args.duration);
+        if (timedResult.success && timedResult.audioData) {
+          const requestedFormat = args.format || 'webm';
+          const timestamp = Date.now();
+          const baseFilename = args.filename
+            ? args.filename.replace(/\.(webm|wav|mp3)$/i, '')
+            : `strudel-timed-${timestamp}`;
+
+          const webmFilename = `${baseFilename}.webm`;
+          const webmPath = `/Users/bart/Documents/vscode/patterns/${webmFilename}`;
+          const audioBuffer = Buffer.from(timedResult.audioData, 'base64');
+          await fsPromises.writeFile(webmPath, audioBuffer);
+
+          let finalPath = webmPath;
+          let finalFormat = 'webm';
+          let finalSize = timedResult.sizeBytes;
+
+          if (requestedFormat !== 'webm') {
+            const outputFilename = `${baseFilename}.${requestedFormat}`;
+            const outputPath = `/Users/bart/Documents/vscode/patterns/${outputFilename}`;
+
+            try {
+              await execAsync('which ffmpeg');
+              let ffmpegCmd;
+              if (requestedFormat === 'wav') {
+                ffmpegCmd = `ffmpeg -i "${webmPath}" -acodec pcm_s16le -ar 44100 "${outputPath}" -y`;
+              } else if (requestedFormat === 'mp3') {
+                ffmpegCmd = `ffmpeg -i "${webmPath}" -codec:a libmp3lame -q:a 0 "${outputPath}" -y`;
+              } else {
+                throw new Error(`Unsupported format: ${requestedFormat}`);
+              }
+
+              await execAsync(ffmpegCmd);
+              const stats = await fsPromises.stat(outputPath);
+              finalSize = stats.size;
+              finalPath = outputPath;
+              finalFormat = requestedFormat;
+              await fsPromises.unlink(webmPath);
+            } catch (conversionError: any) {
+              return {
+                success: true,
+                duration: timedResult.duration,
+                sizeBytes: timedResult.sizeBytes,
+                format: 'webm',
+                savedTo: webmPath,
+                warning: `Conversion to ${requestedFormat} failed: ${conversionError.message}. Saved as WebM instead.`
+              };
+            }
+          }
+
+          return {
+            success: true,
+            duration: timedResult.duration,
+            sizeBytes: finalSize,
+            format: finalFormat,
+            savedTo: finalPath
+          };
+        }
+        return timedResult;
+
+      case 'calculate_pattern_duration':
+        if (!this.isInitialized) {
+          return 'Browser not initialized. Run init first.';
+        }
+        return await this.controller.calculatePatternDuration();
+
+      case 'record_full_pattern':
+        if (!this.isInitialized) {
+          return 'Browser not initialized. Run init first.';
+        }
+        const fullPatternResult = await this.controller.recordFullPattern();
+        if (fullPatternResult.success && fullPatternResult.audioData) {
+          const requestedFormat = args.format || 'webm';
+          const timestamp = Date.now();
+          const baseFilename = args.filename
+            ? args.filename.replace(/\.(webm|wav|mp3)$/i, '')
+            : `strudel-full-pattern-${timestamp}`;
+
+          const webmFilename = `${baseFilename}.webm`;
+          const webmPath = `/Users/bart/Documents/vscode/patterns/${webmFilename}`;
+          const audioBuffer = Buffer.from(fullPatternResult.audioData, 'base64');
+          await fsPromises.writeFile(webmPath, audioBuffer);
+
+          let finalPath = webmPath;
+          let finalFormat = 'webm';
+          let finalSize = fullPatternResult.sizeBytes;
+
+          if (requestedFormat !== 'webm') {
+            const outputFilename = `${baseFilename}.${requestedFormat}`;
+            const outputPath = `/Users/bart/Documents/vscode/patterns/${outputFilename}`;
+
+            try {
+              await execAsync('which ffmpeg');
+              let ffmpegCmd;
+              if (requestedFormat === 'wav') {
+                ffmpegCmd = `ffmpeg -i "${webmPath}" -acodec pcm_s16le -ar 44100 "${outputPath}" -y`;
+              } else if (requestedFormat === 'mp3') {
+                ffmpegCmd = `ffmpeg -i "${webmPath}" -codec:a libmp3lame -q:a 0 "${outputPath}" -y`;
+              } else {
+                throw new Error(`Unsupported format: ${requestedFormat}`);
+              }
+
+              await execAsync(ffmpegCmd);
+              const stats = await fsPromises.stat(outputPath);
+              finalSize = stats.size;
+              finalPath = outputPath;
+              finalFormat = requestedFormat;
+              await fsPromises.unlink(webmPath);
+            } catch (conversionError: any) {
+              return {
+                success: true,
+                duration: fullPatternResult.duration,
+                sizeBytes: fullPatternResult.sizeBytes,
+                format: 'webm',
+                savedTo: webmPath,
+                patternInfo: fullPatternResult.patternInfo,
+                warning: `Conversion to ${requestedFormat} failed: ${conversionError.message}. Saved as WebM instead.`
+              };
+            }
+          }
+
+          return {
+            success: true,
+            duration: fullPatternResult.duration,
+            sizeBytes: finalSize,
+            format: finalFormat,
+            savedTo: finalPath,
+            patternInfo: fullPatternResult.patternInfo
+          };
+        }
+        return fullPatternResult;
+
       // Session Management
       case 'save':
         const toSave = await this.getCurrentPatternSafe();

@@ -8,6 +8,14 @@ export class AudioAnalyzer {
         dataArray: null as Uint8Array | null,
         isConnected: false,
         lastConnectionTime: 0,
+        sourceNode: null as AudioNode | null,  // Store reference to source node
+
+        // Audio recording
+        mediaRecorder: null as MediaRecorder | null,
+        audioChunks: [] as Blob[],
+        isRecording: false,
+        recordingStartTime: 0,
+        recordingDestination: null as MediaStreamAudioDestinationNode | null,
 
         connect() {
           const originalConnect = AudioNode.prototype.connect;
@@ -36,6 +44,9 @@ export class AudioAnalyzer {
                 );
                 console.log('[AudioAnalyzer] Created analyser node in context:', ctx);
               }
+
+              // Store reference to source node for recording
+              (window as any).strudelAudioAnalyzer.sourceNode = this;
 
               const result = originalConnect.call(this, (window as any).strudelAudioAnalyzer.analyser);
               originalConnect.call((window as any).strudelAudioAnalyzer.analyser, destination);
@@ -113,9 +124,117 @@ export class AudioAnalyzer {
               brightness: centroid > 500 ? 'bright' : centroid > 200 ? 'balanced' : 'dark'
             }
           };
+        },
+
+        startRecording() {
+          if (this.isRecording) {
+            return { error: 'Already recording' };
+          }
+
+          if (!this.analyser) {
+            return { error: 'Analyzer not connected - play pattern first' };
+          }
+
+          if (!this.sourceNode) {
+            return { error: 'Source node not available - play pattern first' };
+          }
+
+          try {
+            const ctx = this.sourceNode.context as AudioContext;
+
+            console.log('[AudioAnalyzer] Starting recording from source node:', this.sourceNode.constructor.name);
+            console.log('[AudioAnalyzer] Context type:', ctx.constructor.name);
+            console.log('[AudioAnalyzer] Has createMediaStreamDestination:', typeof ctx.createMediaStreamDestination);
+
+            // Check if context supports MediaStreamDestination
+            if (typeof ctx.createMediaStreamDestination !== 'function') {
+              return {
+                error: 'Audio context does not support MediaStreamDestination. This is a browser/context limitation.'
+              };
+            }
+
+            const dest = ctx.createMediaStreamDestination();
+            this.recordingDestination = dest;
+
+            // Connect source node directly to recording destination (in addition to analyser->destination)
+            this.sourceNode.connect(dest);
+
+            this.mediaRecorder = new MediaRecorder(dest.stream, {
+              mimeType: 'audio/webm;codecs=opus'
+            });
+
+            this.audioChunks = [];
+
+            this.mediaRecorder.ondataavailable = (event: BlobEvent) => {
+              if (event.data.size > 0) {
+                this.audioChunks.push(event.data);
+              }
+            };
+
+            this.mediaRecorder.start(100); // Collect data every 100ms
+            this.isRecording = true;
+            this.recordingStartTime = Date.now();
+
+            console.log('[AudioAnalyzer] Recording started');
+            return { success: true, message: 'Recording started' };
+          } catch (error: any) {
+            console.error('[AudioAnalyzer] Recording error:', error);
+            return { error: error.message || 'Failed to start recording' };
+          }
+        },
+
+        async stopRecording() {
+          if (!this.isRecording || !this.mediaRecorder) {
+            return { error: 'Not currently recording' };
+          }
+
+          return new Promise((resolve) => {
+            this.mediaRecorder!.onstop = async () => {
+              const duration = (Date.now() - this.recordingStartTime) / 1000;
+              const blob = new Blob(this.audioChunks, { type: 'audio/webm' });
+
+              // Convert blob to base64 for transfer
+              const reader = new FileReader();
+              reader.onloadend = () => {
+                const base64data = reader.result as string;
+                const base64 = base64data.split(',')[1];
+
+                this.isRecording = false;
+                this.audioChunks = [];
+
+                // Disconnect the recording destination
+                if (this.sourceNode && this.recordingDestination) {
+                  try {
+                    // Only disconnect if both nodes are in the same audio context
+                    if (this.sourceNode.context === this.recordingDestination.context) {
+                      this.sourceNode.disconnect(this.recordingDestination);
+                      console.log('[AudioAnalyzer] Disconnected recording destination');
+                    } else {
+                      console.log('[AudioAnalyzer] Skipping disconnect - nodes in different contexts');
+                    }
+                  } catch (e) {
+                    console.warn('[AudioAnalyzer] Error disconnecting recording destination:', e);
+                  }
+                }
+                this.recordingDestination = null;
+
+                console.log('[AudioAnalyzer] Recording stopped, duration:', duration, 's');
+                resolve({
+                  success: true,
+                  duration: Math.round(duration * 10) / 10,
+                  sizeBytes: blob.size,
+                  format: 'webm',
+                  audioData: base64
+                });
+              };
+              reader.readAsDataURL(blob);
+            };
+
+            this.mediaRecorder!.stop();
+          });
         }
       };
-      
+
       (window as any).strudelAudioAnalyzer.connect();
     });
   }
@@ -124,6 +243,24 @@ export class AudioAnalyzer {
     return await page.evaluate(() => {
       if ((window as any).strudelAudioAnalyzer) {
         return (window as any).strudelAudioAnalyzer.analyze();
+      }
+      return { error: 'Analyzer not initialized' };
+    });
+  }
+
+  async startRecording(page: Page): Promise<any> {
+    return await page.evaluate(() => {
+      if ((window as any).strudelAudioAnalyzer) {
+        return (window as any).strudelAudioAnalyzer.startRecording();
+      }
+      return { error: 'Analyzer not initialized' };
+    });
+  }
+
+  async stopRecording(page: Page): Promise<any> {
+    return await page.evaluate(() => {
+      if ((window as any).strudelAudioAnalyzer) {
+        return (window as any).strudelAudioAnalyzer.stopRecording();
       }
       return { error: 'Analyzer not initialized' };
     });

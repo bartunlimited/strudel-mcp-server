@@ -32,9 +32,13 @@ export class StrudelController {
     // Listen for console errors from Strudel
     this.page.on('console', (msg) => {
       const text = msg.text();
-      // Capture [getTrigger] errors and [eval] errors
-      if (text.includes('[getTrigger] error') || text.includes('[eval] error')) {
-        this.consoleErrors.push(text);
+      const type = msg.type();
+      // Capture all errors and warnings
+      if (type === 'error' || type === 'warning' ||
+          text.includes('[getTrigger] error') ||
+          text.includes('[eval] error') ||
+          text.includes('[query]')) {
+        this.consoleErrors.push(`[${type}] ${text}`);
       }
     });
 
@@ -77,8 +81,15 @@ export class StrudelController {
   async getCurrentPattern(): Promise<string> {
     if (!this.page) throw new Error('Not initialized');
 
+    // Use CodeMirror API to get full document content instead of textContent
+    // textContent can truncate long patterns
     return await this.page.evaluate(() => {
-      const editor = document.querySelector('.cm-content');
+      const editor = document.querySelector('.cm-content') as any;
+      if (editor && editor.cmView?.view) {
+        // Get full document from CodeMirror state
+        return editor.cmView.view.state.doc.toString();
+      }
+      // Fallback to textContent if CodeMirror API not available
       return editor?.textContent || '';
     });
   }
@@ -147,6 +158,118 @@ export class StrudelController {
     if (!this.page) throw new Error('Not initialized');
 
     return await this.analyzer.getAnalysis(this.page);
+  }
+
+  async startRecording(): Promise<any> {
+    if (!this.page) throw new Error('Not initialized');
+
+    return await this.analyzer.startRecording(this.page);
+  }
+
+  async stopRecording(): Promise<any> {
+    if (!this.page) throw new Error('Not initialized');
+
+    return await this.analyzer.stopRecording(this.page);
+  }
+
+  async recordTimed(durationSeconds: number): Promise<any> {
+    if (!this.page) throw new Error('Not initialized');
+
+    const startResult = await this.analyzer.startRecording(this.page);
+    if (!startResult.success) {
+      return startResult;
+    }
+
+    // Wait for the specified duration
+    await this.page.waitForTimeout(durationSeconds * 1000);
+
+    return await this.analyzer.stopRecording(this.page);
+  }
+
+  async calculatePatternDuration(): Promise<any> {
+    if (!this.page) throw new Error('Not initialized');
+
+    return await this.page.evaluate(() => {
+      try {
+        const editor = document.querySelector('.cm-content');
+        const patternCode = editor?.textContent || '';
+
+        // Extract CPM value
+        const cpmMatch = patternCode.match(/setcpm\s*\(\s*(\d+(?:\.\d+)?)\s*\)/);
+        const cpm = cpmMatch ? parseFloat(cpmMatch[1]) : 60;
+
+        // Find the longest .slow() value in masks
+        const slowMatches = patternCode.matchAll(/\.slow\s*\(\s*(\d+(?:\.\d+)?)\s*\)/g);
+        let maxSlowValue = 1;
+        for (const match of slowMatches) {
+          const slowValue = parseFloat(match[1]);
+          if (slowValue > maxSlowValue) {
+            maxSlowValue = slowValue;
+          }
+        }
+
+        // Calculate duration: (cycles / CPM) * 60 seconds
+        const durationSeconds = (maxSlowValue / cpm) * 60;
+
+        return {
+          success: true,
+          cpm: cpm,
+          cycles: maxSlowValue,
+          durationSeconds: Math.round(durationSeconds * 100) / 100,
+          durationFormatted: `${Math.floor(durationSeconds / 60)}:${String(Math.floor(durationSeconds % 60)).padStart(2, '0')}`
+        };
+      } catch (error: any) {
+        return {
+          success: false,
+          error: error.message
+        };
+      }
+    });
+  }
+
+  async recordFullPattern(): Promise<any> {
+    if (!this.page) throw new Error('Not initialized');
+
+    // Calculate pattern duration
+    const durationInfo = await this.calculatePatternDuration();
+    if (!durationInfo.success) {
+      return {
+        error: 'Failed to calculate pattern duration: ' + durationInfo.error
+      };
+    }
+
+    // Stop current playback
+    await this.stop();
+
+    // Start fresh from beginning
+    await this.play();
+
+    // Wait a moment for audio to stabilize
+    await this.page.waitForTimeout(500);
+
+    // Start recording
+    const startResult = await this.analyzer.startRecording(this.page);
+    if (!startResult.success) {
+      return startResult;
+    }
+
+    // Wait for full pattern duration
+    await this.page.waitForTimeout(durationInfo.durationSeconds * 1000);
+
+    // Stop recording
+    const result = await this.analyzer.stopRecording(this.page);
+
+    // Add duration info to result
+    if (result.success) {
+      result.patternInfo = {
+        cpm: durationInfo.cpm,
+        cycles: durationInfo.cycles,
+        expectedDuration: durationInfo.durationSeconds,
+        durationFormatted: durationInfo.durationFormatted
+      };
+    }
+
+    return result;
   }
 
   async getSounds(): Promise<any> {
