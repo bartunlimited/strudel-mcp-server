@@ -74,6 +74,97 @@ Then ask Claude:
 - "Generate a jazz chord progression in F major"
 - "Create a drum & bass pattern at 174 BPM"
 
+## ⚠️ Important Limitations
+
+### What This Server CAN Do
+- ✅ **Generate original music patterns** in various genres
+- ✅ **Create rhythms, basslines, melodies** from scratch
+- ✅ **Apply music theory** (scales, chord progressions, euclidean rhythms)
+- ✅ **Manipulate patterns** (transpose, reverse, humanize, add effects)
+- ✅ **Analyze audio** (frequency analysis, tempo/key detection)
+- ✅ **Work from sheet music/tabs** when provided exact notation
+
+### What This Server CANNOT Do Well
+- ❌ **Recreate existing songs** without sheet music/tabs
+- ❌ **"Sound like" specific artists** without detailed musical notation
+- ❌ **Hear the difference** between generated patterns and originals
+- ❌ **Understand musical "feel"** or subjective qualities without feedback
+- ❌ **Create complex original compositions** - Even when the AI has a musical idea, it cannot verify if the generated pattern sounds as intended
+
+### Why Music Creation is Limited
+
+The AI (Claude) controlling this server:
+1. **Cannot hear audio** - No access to listen to reference tracks or generated output
+2. **No musical training on audio** - Trained on text, not sound/frequencies
+3. **No pitch/rhythm perception** - Cannot judge if patterns "sound right"
+4. **Relies on notation** - Needs exact musical notation (MIDI notes, tab numbers, sheet music)
+5. **No feedback loop** - Cannot iterate and improve based on how the music actually sounds
+
+**Critical Issue: The "Blind Composer" Problem**
+
+Even when the AI conceives a musical idea (e.g., "a haunting melody with syncopated bass"), it cannot:
+- Verify the melody actually sounds haunting
+- Confirm the bass syncopation works rhythmically
+- Detect if instruments clash or complement each other
+- Judge if the overall composition achieves the intended effect
+
+**This means:**
+- Simple, well-understood patterns work reliably (basic drum beats, standard chord progressions)
+- Complex, creative ideas often fail because there's no way to verify they sound good
+- The AI writes code that *should* create music, but has no way to confirm it *actually* does
+
+### Best Practices for Song Recreation
+
+If you want to recreate an existing song, you MUST provide:
+
+1. **Exact Musical Notation**:
+   - Sheet music (PDF with readable notation)
+   - Guitar/bass tabs with fret numbers
+   - MIDI file analysis with note sequences
+   - Precise chord progressions with voicings
+
+2. **Complete Song Information**:
+   - Exact tempo (BPM)
+   - Key signature
+   - Time signature
+   - Specific instrument sounds used
+
+3. **Iterative Feedback**:
+   - Compare output to original yourself
+   - Provide specific corrections: "the melody is an octave too high" or "the bass note in measure 2 should be F# not F"
+   - Point out exact timing/rhythm issues
+
+### Recommended Use Cases
+
+**✅ GOOD:**
+- "Create an original techno track at 128 BPM"
+- "Generate a jazz chord progression in Bb major"
+- "Make a drum pattern with a breakbeat feel"
+- "Transcribe this sheet music PDF into Strudel" (with PDF provided)
+
+**❌ CHALLENGING WITHOUT EXACT NOTATION:**
+- "Make it sound like Sweet Home Alabama"
+- "Recreate Bohemian Rhapsody"
+- "Generate the riff from [any song]"
+- "Make it sound more like Daft Punk"
+
+### Latest Additions (v2.3.0)
+
+**New Features:**
+- 🎵 **Pattern duration calculation** - Automatically calculates full pattern duration based on CPM and `.slow()` values
+- ⏱️ **Timed recording** - Record audio for specific durations
+- 📼 **Full pattern recording** - Automatically records complete pattern from start to finish
+- 🔧 **Audio context fix** - Resolved disconnect warnings in audio analysis
+- 📝 **Better error reporting** - Console errors now properly captured and reported
+
+**New Tools:**
+- `calculate_pattern_duration` - Get pattern duration information
+- `record_timed(duration)` - Record for specified number of seconds
+- `record_full_pattern()` - Automatically calculate and record entire pattern
+- `get_console_errors` - Check for Strudel console errors
+
+See [CHANGELOG.md](CHANGELOG.md) for complete version history.
+
 ## 🛠️ Available Tools (40+)
 
 ### Core Control (10 tools)
